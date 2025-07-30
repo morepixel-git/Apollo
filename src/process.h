@@ -8,12 +8,19 @@
   #define __kernel_entry
 #endif
 
+#ifndef BOOST_PROCESS_VERSION
+  #define BOOST_PROCESS_VERSION 1
+#endif
+
 // standard includes
 #include <optional>
 #include <unordered_map>
 
 // lib includes
-#include <boost/process/v1.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/group.hpp>
+#include <boost/process/v1/environment.hpp>
+#include <boost/process/v1/search_path.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <nlohmann/json.hpp>
 
@@ -55,6 +62,7 @@ namespace proc {
    */
   struct ctx_t {
     std::vector<cmd_t> prep_cmds;
+    std::vector<cmd_t> state_cmds;
 
     /**
      * Some applications, such as Steam, either exit quickly, or keep running indefinitely.
@@ -87,6 +95,7 @@ namespace proc {
     bool use_app_identity;
     bool per_client_app_identity;
     bool allow_client_commands;
+    bool terminate_on_pause;
     int  scale_factor;
     std::chrono::seconds exit_timeout;
   };
@@ -98,15 +107,14 @@ namespace proc {
     std::string display_name;
     std::string initial_display;
     std::string mode_changed_display;
-    bool initial_hdr;
-    bool virtual_display;
-    bool allow_client_commands;
+    bool initial_hdr = false;
+    bool virtual_display = false;
+    bool allow_client_commands = false;
 
     proc_t(
       boost::process::v1::environment &&env,
       std::vector<ctx_t> &&apps
     ):
-        _app_id(0),
         _env(std::move(env)),
         _apps(std::move(apps)) {
     }
@@ -127,11 +135,13 @@ namespace proc {
     std::string get_app_image(int app_id);
     std::string get_last_run_app_name();
     std::string get_running_app_uuid();
-    boost::process::environment get_env();
+    boost::process::v1::environment get_env();
+    void resume();
+    void pause();
     void terminate(bool immediate = false, bool needs_refresh = true);
 
   private:
-    int _app_id;
+    int _app_id = 0;
     std::string _app_name;
 
     boost::process::v1::environment _env;
@@ -155,7 +165,7 @@ namespace proc {
   };
 
   boost::filesystem::path
-  find_working_directory(const std::string &cmd, boost::process::environment &env);
+  find_working_directory(const std::string &cmd, const boost::process::v1::environment &env);
 
   /**
    * @brief Calculate a stable id based on name and image data
@@ -189,3 +199,7 @@ namespace proc {
   extern int terminate_app_id;
   extern std::string terminate_app_id_str;
 }  // namespace proc
+
+#ifdef BOOST_PROCESS_VERSION
+  #undef BOOST_PROCESS_VERSION
+#endif

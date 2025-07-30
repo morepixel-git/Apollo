@@ -143,11 +143,11 @@ namespace config {
       workarounds_t wa;
     } dd;
 
-    int min_fps_factor;  // Minimum fps target, determines minimum frame time
     int max_bitrate;  // Maximum bitrate, sets ceiling in kbps for bitrate requested from client
 
     std::string fallback_mode;
     bool isolated_virtual_display_option;
+    bool ignore_encoder_probe_failure;
   };
 
   struct audio_t {
@@ -212,6 +212,7 @@ namespace config {
     bool native_pen_touch;
 
     bool enable_input_only_mode;
+    bool forward_rumble;
   };
 
   namespace flag {
@@ -280,7 +281,9 @@ namespace config {
 
     std::string log_file;
     bool notify_pre_releases;
+    bool legacy_ordering;
     std::vector<prep_cmd_t> prep_cmds;
+    std::vector<prep_cmd_t> state_cmds;
     std::vector<server_cmd_t> server_cmds;
   };
 

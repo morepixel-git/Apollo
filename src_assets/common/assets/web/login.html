@@ -89,7 +89,10 @@
           localStorage.removeItem('login')
         }
         fetch("./api/login", {
-          method: "POST",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
           body: JSON.stringify(this.passwordData),
         }).then((res) => {
           this.loading = false;
@@ -101,7 +104,7 @@
             const url = new URL(window.location);
             const redirectUrl = url.searchParams.get('redir');
             const hash = url.hash;
-            if (redirectUrl) {
+            if (redirectUrl && redirectUrl.startsWith('.')) {
               location.href = redirectUrl + hash;
             } else {
               location.href = './' + hash;

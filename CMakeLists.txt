@@ -5,18 +5,18 @@ cmake_minimum_required(VERSION 3.20)
 # todo - set this conditionally
 
 project(Apollo VERSION 0.0.0
-        DESCRIPTION "Self-hosted game stream host for Moonlight"
-        HOMEPAGE_URL "https://app.lizardbyte.dev/Sunshine")
+        DESCRIPTION "Self-hosted game stream host for Artemis"
+        HOMEPAGE_URL "https://github.com/ClassicOldSong/Apollo")
 
 set(PROJECT_LICENSE "GPL-3.0-only")
 
-set(PROJECT_FQDN "dev.lizardbyte.app.Sunshine")
+set(PROJECT_FQDN "com.SudoMaker.dev.Apollo")
 
-set(PROJECT_BRIEF_DESCRIPTION "GameStream host for Moonlight")  # must be <= 35 characters
+set(PROJECT_BRIEF_DESCRIPTION "GameStream host for Artemis")  # must be <= 35 characters
 
 set(PROJECT_LONG_DESCRIPTION "Offering low latency, cloud gaming server capabilities with support for AMD, Intel, \
 and Nvidia GPUs for hardware encoding. Software encoding is also available. You can connect to Apollo from any \
-Moonlight client on a variety of devices. A web UI is provided to allow configuration, and client pairing, from \
+Artemis client on a variety of devices. A web UI is provided to allow configuration, and client pairing, from \
 your favorite web browser. Pair from the local server or any mobile device.")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -26,6 +26,9 @@ endif()
 
 # set the module path, used for includes
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
+# export compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # set version info for this build
 include(${CMAKE_MODULE_PATH}/prep/build_version.cmake)

@@ -5,11 +5,6 @@
 // platform includes
 #include <dxgi1_2.h>
 
-// local includes
-#include "display.h"
-#include "misc.h"
-#include "src/logging.h"
-
 // Gross hack to work around MINGW-packages#22160
 #define ____FIReference_1_boolean_INTERFACE_DEFINED__
 
@@ -17,6 +12,11 @@
 #include <winrt/windows.foundation.h>
 #include <winrt/windows.foundation.metadata.h>
 #include <winrt/windows.graphics.directx.direct3d11.h>
+
+// local includes
+#include "display.h"
+#include "misc.h"
+#include "src/logging.h"
 
 namespace platf {
   using namespace std::literals;
@@ -136,6 +136,17 @@ namespace platf::dxgi {
       }
     } catch (winrt::hresult_error &e) {
       BOOST_LOG(warning) << "Screen capture may not be fully supported on this device for this release of Windows: failed to disable border around capture area: [0x"sv << util::hex(e.code()).to_string_view() << ']';
+    }
+    try {
+      if (winrt::ApiInformation::IsPropertyPresent(L"Windows.Graphics.Capture.GraphicsCaptureSession", L"MinUpdateInterval")) {
+        capture_session.MinUpdateInterval(winrt::TimeSpan{ 10000000 / (config.framerate * 2) });
+      }
+      else {
+        BOOST_LOG(warning) << "Can't set MinUpdateInterval";
+      }
+    }
+    catch (winrt::hresult_error &e) {
+      BOOST_LOG(warning) << "Screen capture may not be fully supported on this device for this release of Windows: failed to set MinUpdateInterval: [0x"sv << util::hex(e.code()).to_string_view() << ']';
     }
     try {
       capture_session.StartCapture();

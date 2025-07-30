@@ -105,6 +105,24 @@
               </div>
             </div>
 
+            <!-- Enable legacy ordering -->
+            <Checkbox class="mb-3"
+                      id="enable_legacy_ordering"
+                      label="pin.enable_legacy_ordering"
+                      desc="pin.enable_legacy_ordering_desc"
+                      v-model="client.editEnableLegacyOrdering"
+                      default="true"
+            ></Checkbox>
+
+            <!-- Always Use Virtual Display -->
+            <Checkbox class="mb-3"
+                      id="always_use_virtual_display"
+                      label="pin.always_use_virtual_display"
+                      desc="pin.always_use_virtual_display_desc"
+                      v-model="client.editAlwaysUseVirtualDisplay"
+                      default="false"
+                      v-if="platform === 'windows'"
+            ></Checkbox>
             <!-- Display Mode Override -->
             <div class="mb-3 mt-2">
               <label for="display_mode_override" class="form-label">{{ $t('pin.display_mode_override') }}</label>
@@ -119,8 +137,17 @@
               <div class="form-text">{{ $t('pin.display_mode_override_desc') }} <a href="https://github.com/ClassicOldSong/Apollo/wiki/Display-Mode-Override" target="_blank">{{ $t('_common.learn_more') }}</a></div>
             </div>
 
+            <!-- Allow client commands -->
+            <Checkbox class="mb-3"
+                      id="allow_client_commands"
+                      label="pin.allow_client_commands"
+                      desc="pin.allow_client_commands_desc"
+                      v-model="client.editAllowClientCommands"
+                      default="true"
+            ></Checkbox>
+
             <!-- connect/disconnect commands -->
-            <div class="mb-3 mt-2 d-flex flex-column" v-for="cmdType in ['do', 'undo']">
+            <div class="mb-3 mt-2 d-flex flex-column" v-for="cmdType in ['do', 'undo']" v-if="client.editAllowClientCommands">
               <label class="mb-0 orm-label">{{ $t(`pin.client_${cmdType}_cmd`) }}</label>
               <div class="form-text">{{ $t(`pin.client_${cmdType}_cmd_desc`) }} <a href="https://github.com/ClassicOldSong/Apollo/wiki/Client-Commands" target="_blank">{{ $t('_common.learn_more') }}</a></div>
               <table class="mt-2 table" v-if="client[`edit_${cmdType}`].length > 0">
@@ -185,6 +212,7 @@
   import { createApp } from 'vue'
   import { initApp } from './init'
   import Navbar from './Navbar.vue'
+  import Checkbox from './Checkbox.vue'
 
   let resetOTPTimeout = null;
   const qrContainer = document.createElement('div');
@@ -353,7 +381,8 @@
 
   let app = createApp({
     components: {
-      Navbar
+      Navbar,
+      Checkbox
     },
     inject: ['i18n'],
     data,
@@ -393,7 +422,10 @@
         let b = JSON.stringify({pin: pin, name: name});
         fetch("./api/pin", {
           credentials: 'include',
-          method: "POST",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
           body: b
         })
           .then((response) => response.json())
@@ -418,8 +450,13 @@
       requestOTP() {
         if (this.editingHost) return;
 
-        fetch(`./api/otp?passphrase=${this.passphrase}${this.deviceName && `&deviceName=${this.deviceName}` || ''}`, {
-          credentials: 'include'
+        fetch("./api/otp", {
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
+          body: JSON.stringify({ passphrase: this.passphrase, deviceName: this.deviceName })
         })
         .then(resp => resp.json())
         .then(resp => {
@@ -434,7 +471,7 @@
           this.otpStatus = 'success'
           this.otpMessage = this.i18n.t('pin.otp_success')
 
-          const isLocalHost = ['localhost', '127.0.0.1', '[::1]'].indexOf(location.hostname) < 0
+          const isLocalHost = ['localhost', '127.0.0.1', '[::1]'].indexOf(location.hostname) >= 0
 
           if (hostManuallySet) {
             Object.assign(this, hostInfoCache);
@@ -442,7 +479,7 @@
             this.hostAddr = resp.ip
             this.hostPort = parseInt(location.port, 10) - 1
 
-            if (isLocalHost) {
+            if (!isLocalHost) {
               this.hostAddr = location.hostname
             }
 
@@ -461,7 +498,7 @@
               resetOTPTimeout = null
             }, 3 * 60 * 1000)
 
-            if (isLocalHost) {
+            if (!isLocalHost) {
               setTimeout(() => {
                 if (window.confirm(this.i18n.t('pin.otp_pair_now'))) {
                   window.open(this.deepLink);
@@ -489,22 +526,28 @@
         if (currentEditingClient) {
           this.cancelEdit(currentEditingClient);
         }
-        currentEditingClient = client;
         client.editing = true;
         client.editPerm = client.perm;
         client.editName = client.name;
+        client.editAllowClientCommands = client.allow_client_commands;
+        client.editEnableLegacyOrdering = client.enable_legacy_ordering;
+        client.editAlwaysUseVirtualDisplay = client.always_use_virtual_display;
         client.editDisplayMode = client.display_mode;
         client.edit_do = JSON.parse(JSON.stringify(client.do || []));
         client.edit_undo = JSON.parse(JSON.stringify(client.undo || []));
+        currentEditingClient = client;
 
         console.log(client.do, client.undo)
       },
       cancelEdit(client) {
+        currentEditingClient = null;
         client.editing = false;
         client.editPerm = client.perm;
         client.editName = client.name;
         client.editDisplayMode = client.display_mode;
-        currentEditingClient = null;
+        client.editAllowClientCommands = client.allow_client_commands;
+        client.editEnableLegacyOrdering = client.enable_legacy_ordering;
+        client.editAlwaysUseVirtualDisplay = client.always_use_virtual_display;
       },
       saveClient(client) {
         client.editing = false;
@@ -513,6 +556,9 @@
           uuid: client.uuid,
           name: client.editName,
           display_mode: client.editDisplayMode.trim(),
+          allow_client_commands: client.editAllowClientCommands,
+          enable_legacy_ordering: client.editEnableLegacyOrdering,
+          always_use_virtual_display: client.editAlwaysUseVirtualDisplay,
           perm: client.editPerm & permissionMapping._all,
           do: client.edit_do.reduce((filtered, {cmd: _cmd, elevated}) => {
             const cmd = _cmd.trim()
@@ -537,8 +583,19 @@
         }
         fetch("./api/clients/update", {
           credentials: 'include',
-          method: "POST",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
           body: JSON.stringify(editedClient)
+        })
+        .then(resp => resp.json())
+        .then(resp => {
+          if (resp.status) {
+            this.refreshClients();
+          } else {
+            throw new Error(resp.message);
+          }
         })
         .catch(err => {
           alert(this.i18n.t('pin.save_client_error') + err);
@@ -583,7 +640,10 @@
       disconnectClient(uuid) {
         fetch("./api/clients/disconnect", {
           credentials: 'include',
-          method: "POST",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
           body: JSON.stringify({ uuid })
         }).finally(() => {
           setTimeout(() => {
@@ -595,7 +655,10 @@
         this.unpairAllPressed = true;
         fetch("./api/clients/unpair-all", {
           credentials: 'include',
-          method: "POST"
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
         })
           .then((r) => r.json())
           .then((r) => {
@@ -610,7 +673,10 @@
       unpairSingle(uuid) {
         fetch("./api/clients/unpair", {
           credentials: 'include',
-          method: "POST",
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          method: 'POST',
           body: JSON.stringify({ uuid })
         }).then(() => {
           this.showApplyMessage = true;
@@ -626,7 +692,18 @@
           .then((response) => {
             if (response.status && response.named_certs && response.named_certs.length) {
               this.platform = response.platform
-              this.clients = response.named_certs.map(({name, uuid, display_mode, perm, connected, do: _do, undo}) => {
+              this.clients = response.named_certs.map(({
+                name,
+                uuid,
+                display_mode,
+                perm,
+                connected,
+                do: _do,
+                undo,
+                allow_client_commands,
+                always_use_virtual_display,
+                enable_legacy_ordering
+              }) => {
                 const permInt = parseInt(perm, 10);
                 return {
                   name,
@@ -636,7 +713,10 @@
                   connected,
                   editing: false,
                   do: _do,
-                  undo
+                  undo,
+                  allow_client_commands,
+                  enable_legacy_ordering,
+                  always_use_virtual_display
                 }
               })
               currentEditingClient = null;

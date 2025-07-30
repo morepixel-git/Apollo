@@ -265,7 +265,10 @@ namespace nvhttp {
    * @param[in]  do_cmds    The do commands
    * @param[in]  undo_cmds  The undo commands
    * @param[in]  newPerm    New permission
-   *
+   * @param[in]  enable_legacy_ordering  Enable legacy ordering
+   * @param[in]  allow_client_commands  Allow client commands
+   * @param[in]  always_use_virtual_display  Always use virtual display
+   * 
    * @return     Whether the update is successful
    */
   bool update_device_info(
@@ -274,6 +277,9 @@ namespace nvhttp {
     const std::string& display_mode,
     const cmd_list_t& do_cmds,
     const cmd_list_t& undo_cmds,
-    const crypto::PERM newPerm
+    const crypto::PERM newPerm,
+    const bool enable_legacy_ordering,
+    const bool allow_client_commands,
+    const bool always_use_virtual_display
   );
 }  // namespace nvhttp

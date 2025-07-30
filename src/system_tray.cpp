@@ -29,6 +29,10 @@
 
   #define TRAY_MSG_NO_APP_RUNNING "Reload Apps"
 
+  #ifndef BOOST_PROCESS_VERSION
+    #define BOOST_PROCESS_VERSION 1
+  #endif
+
   // standard includes
   #include <csignal>
   #include <string>
@@ -47,7 +51,6 @@
   #include "process.h"
   #include "network.h"
   #include "src/entry_handler.h"
-  #include "version.h"
 
 using namespace std::literals;
 
@@ -75,11 +78,14 @@ namespace system_tray {
   void tray_restart_cb(struct tray_menu *item) {
     BOOST_LOG(info) << "Restarting from system tray"sv;
 
+    proc::proc.terminate();
     platf::restart();
   }
 
   void tray_quit_cb(struct tray_menu *item) {
     BOOST_LOG(info) << "Quitting from system tray"sv;
+
+    proc::proc.terminate();
 
   #ifdef _WIN32
     // If we're running in a service, return a special status to
@@ -417,4 +423,9 @@ namespace system_tray {
   }
 
 }  // namespace system_tray
+
+  #ifdef BOOST_PROCESS_VERSION
+    #undef BOOST_PROCESS_VERSION 1
+  #endif
+
 #endif

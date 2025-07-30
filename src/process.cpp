@@ -4,6 +4,9 @@
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
+#ifndef BOOST_PROCESS_VERSION
+ #define BOOST_PROCESS_VERSION 1
+#endif
 // standard includes
 #include <filesystem>
 #include <string>
@@ -124,7 +127,7 @@ namespace proc {
     }
   }
 
-  boost::filesystem::path find_working_directory(const std::string &cmd, boost::process::v1::environment &env) {
+  boost::filesystem::path find_working_directory(const std::string &cmd, const boost::process::v1::environment &env) {
     // Parse the raw command string into parts to get the actual command portion
 #ifdef _WIN32
     auto parts = boost::program_options::split_winmain(cmd);
@@ -162,6 +165,8 @@ namespace proc {
   void proc_t::launch_input_only() {
     _app_id = input_only_app_id;
     _app_name = "Remote Input";
+    _app.uuid = REMOTE_INPUT_UUID;
+    _app.terminate_on_pause = true;
     allow_client_commands = false;
     placebo = true;
 
@@ -304,13 +309,13 @@ namespace proc {
             // Apply display settings
             VDISPLAY::changeDisplaySettings(vdisplayName.c_str(), render_width, render_height, target_fps);
           }
-          
+
           // Check the ISOLATED DISPLAY configuration setting and rearrange the displays
          if (config::video.isolated_virtual_display_option == true) {
               // Apply the isolated display settings
               VDISPLAY::changeDisplaySettings2(vdisplayName.c_str(), render_width, render_height, target_fps, true);
          }
-  
+
           // Set virtual_display to true when everything went fine
           this->virtual_display = true;
           this->display_name = platf::to_utf8(vdisplayName);
@@ -348,7 +353,11 @@ namespace proc {
     // due to hotplugging, driver crash, primary monitor change,
     // or any number of other factors).
     if (rtsp_stream::session_count() == 0 && video::probe_encoders()) {
-      return 503;
+      if (config::video.ignore_encoder_probe_failure) {
+        BOOST_LOG(warning) << "Encoder probe failed, but continuing due to user configuration.";
+      } else {
+        return 503;
+      }
     }
 
     std::string fps_str;
@@ -371,6 +380,7 @@ namespace proc {
     _env["APOLLO_APP_ID"] = _app.id;
     _env["APOLLO_APP_NAME"] = _app.name;
     _env["APOLLO_APP_UUID"] = _app.uuid;
+    _env["APOLLO_APP_STATUS"] = "STARTING";
     _env["APOLLO_CLIENT_UUID"] = launch_session->unique_id;
     _env["APOLLO_CLIENT_NAME"] = launch_session->device_name;
     _env["APOLLO_CLIENT_WIDTH"] = std::to_string(render_width);
@@ -453,6 +463,8 @@ namespace proc {
       }
     }
 
+    _env["APOLLO_APP_STATUS"] = "RUNNING";
+
     for (auto &cmd : _app.detached) {
       boost::filesystem::path working_dir = _app.working_dir.empty() ?
                                               find_working_directory(cmd, _env) :
@@ -516,9 +528,9 @@ namespace proc {
       if (config::video.dd.hdr_option == config::video_t::dd_t::hdr_option_e::automatic) {
         mode_changed_display = currentDisplay;
 
-        if (!VDISPLAY::setDisplayHDRByName(currentDisplayW.c_str(), false)) {
-          return;
-        }
+        // Try turn off HDR whatever
+        // As we always have to apply the workaround by turining off HDR first
+        VDISPLAY::setDisplayHDRByName(currentDisplayW.c_str(), false);
 
         if (enable_hdr) {
           if (VDISPLAY::setDisplayHDRByName(currentDisplayW.c_str(), true)) {
@@ -589,6 +601,108 @@ namespace proc {
     return 0;
   }
 
+  void proc_t::resume() {
+    BOOST_LOG(info) << "Session resuming for app [" << _app_name << "].";
+
+    if (!_app.state_cmds.empty()) {
+      auto exec_thread = std::thread([cmd_list = _app.state_cmds, app_working_dir = _app.working_dir, _env = _env]() mutable {
+
+        _env["APOLLO_APP_STATUS"] = "RESUMING";
+
+        std::error_code ec;
+        auto _state_resume_it = std::begin(cmd_list);
+
+        for (; _state_resume_it != std::end(cmd_list); ++_state_resume_it) {
+          auto &cmd = *_state_resume_it;
+
+          // Skip empty commands
+          if (cmd.do_cmd.empty()) {
+            continue;
+          }
+
+          boost::filesystem::path working_dir = app_working_dir.empty() ?
+                                                  find_working_directory(cmd.do_cmd, _env) :
+                                                  boost::filesystem::path(app_working_dir);
+          BOOST_LOG(info) << "Executing Resume Cmd: ["sv << cmd.do_cmd << "] elevated: " << cmd.elevated;
+          auto child = platf::run_command(cmd.elevated, true, cmd.do_cmd, working_dir, _env, nullptr, ec, nullptr);
+
+          if (ec) {
+            BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
+            break;
+          }
+
+          child.wait();
+
+          auto ret = child.exit_code();
+          if (ret != 0 && ec != std::errc::permission_denied) {
+            BOOST_LOG(error) << '[' << cmd.do_cmd << "] failed with code ["sv << ret << ']';
+            break;
+          }
+        }
+      });
+
+      exec_thread.detach();
+    }
+  }
+
+  void proc_t::pause() {
+    if (!running()) {
+      BOOST_LOG(info) << "Session already stopped, do not run pause commands.";
+      return;
+    }
+
+    if (_app.terminate_on_pause) {
+      BOOST_LOG(info) << "Terminating app [" << _app_name << "] when all clients are disconnected. Pause commands are skipped.";
+      terminate();
+      return;
+    }
+
+    BOOST_LOG(info) << "Session pausing for app [" << _app_name << "].";
+
+    if (!_app.state_cmds.empty()) {
+      auto exec_thread = std::thread([cmd_list = _app.state_cmds, app_working_dir = _app.working_dir, _env = _env]() mutable {
+        _env["APOLLO_APP_STATUS"] = "PAUSING";
+
+        std::error_code ec;
+        auto _state_pause_it = std::begin(cmd_list);
+
+        for (; _state_pause_it != std::end(cmd_list); ++_state_pause_it) {
+          auto &cmd = *_state_pause_it;
+
+          // Skip empty commands
+          if (cmd.undo_cmd.empty()) {
+            continue;
+          }
+
+          boost::filesystem::path working_dir = app_working_dir.empty() ?
+                                                  find_working_directory(cmd.undo_cmd, _env) :
+                                                  boost::filesystem::path(app_working_dir);
+          BOOST_LOG(info) << "Executing Pause Cmd: ["sv << cmd.undo_cmd << "] elevated: " << cmd.elevated;
+          auto child = platf::run_command(cmd.elevated, true, cmd.undo_cmd, working_dir, _env, nullptr, ec, nullptr);
+
+          if (ec) {
+            BOOST_LOG(error) << "Couldn't run ["sv << cmd.undo_cmd << "]: System: "sv << ec.message();
+            break;
+          }
+
+          child.wait();
+
+          auto ret = child.exit_code();
+          if (ret != 0 && ec != std::errc::permission_denied) {
+            BOOST_LOG(error) << '[' << cmd.undo_cmd << "] failed with code ["sv << ret << ']';
+            break;
+          }
+        }
+      });
+
+      exec_thread.detach();
+    }
+
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+    system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
+#endif
+  }
+
   void proc_t::terminate(bool immediate, bool needs_refresh) {
     std::error_code ec;
     placebo = false;
@@ -599,6 +713,8 @@ namespace proc {
 
     _process = boost::process::v1::child();
     _process_group = boost::process::v1::group();
+
+    _env["APOLLO_APP_STATUS"] = "TERMINATING";
 
     for (; _app_prep_it != _app_prep_begin; --_app_prep_it) {
       auto &cmd = *(_app_prep_it - 1);
@@ -1181,6 +1297,34 @@ namespace proc {
             }
           }
 
+          // Build the list of pause/resume commands.
+          std::vector<proc::cmd_t> state_cmds;
+          bool exclude_global_state_cmds = app_node.value("exclude-global-state-cmd", false);
+          if (!exclude_global_state_cmds) {
+            state_cmds.reserve(config::sunshine.state_cmds.size());
+            for (auto &state_cmd : config::sunshine.state_cmds) {
+              auto do_cmd = parse_env_val(this_env, state_cmd.do_cmd);
+              auto undo_cmd = parse_env_val(this_env, state_cmd.undo_cmd);
+              state_cmds.emplace_back(
+                std::move(do_cmd),
+                std::move(undo_cmd),
+                std::move(state_cmd.elevated)
+              );
+            }
+          }
+          if (app_node.contains("state-cmd") && app_node["state-cmd"].is_array()) {
+            for (auto &prep_node : app_node["state-cmd"]) {
+              std::string do_cmd = parse_env_val(this_env, prep_node.value("do", ""));
+              std::string undo_cmd = parse_env_val(this_env, prep_node.value("undo", ""));
+              bool elevated = prep_node.value("elevated", false);
+              state_cmds.emplace_back(
+                std::move(do_cmd),
+                std::move(undo_cmd),
+                std::move(elevated)
+              );
+            }
+          }
+
           // Build the list of detached commands.
           std::vector<std::string> detached;
           if (app_node.contains("detached") && app_node["detached"].is_array()) {
@@ -1215,6 +1359,7 @@ namespace proc {
           ctx.use_app_identity = app_node.value("use-app-identity", false);
           ctx.per_client_app_identity = app_node.value("per-client-app-identity", false);
           ctx.allow_client_commands = app_node.value("allow-client-commands", true);
+          ctx.terminate_on_pause = app_node.value("terminate-on-pause", false);
           ctx.gamepad = app_node.value("gamepad", "");
 
           // Calculate a unique application id.
@@ -1228,6 +1373,7 @@ namespace proc {
 
           ctx.name = std::move(name);
           ctx.prep_cmds = std::move(prep_cmds);
+          ctx.state_cmds = std::move(state_cmds);
           ctx.detached = std::move(detached);
 
           apps.emplace_back(std::move(ctx));
@@ -1280,6 +1426,7 @@ namespace proc {
       ctx.use_app_identity = false;
       ctx.per_client_app_identity = false;
       ctx.allow_client_commands = false;
+      ctx.terminate_on_pause = false;
 
       ctx.elevated = false;
       ctx.auto_detach = true;
@@ -1313,6 +1460,7 @@ namespace proc {
       ctx.use_app_identity = false;
       ctx.per_client_app_identity = false;
       ctx.allow_client_commands = false;
+      ctx.terminate_on_pause = false;
 
       ctx.elevated = false;
       ctx.auto_detach = true;
@@ -1347,6 +1495,7 @@ namespace proc {
         ctx.use_app_identity = false;
         ctx.per_client_app_identity = false;
         ctx.allow_client_commands = false;
+        ctx.terminate_on_pause = true; // There's no need to keep an active input only session ongoing
 
         ctx.elevated = false;
         ctx.auto_detach = true;
@@ -1382,6 +1531,7 @@ namespace proc {
         ctx.use_app_identity = false;
         ctx.per_client_app_identity = false;
         ctx.allow_client_commands = false;
+        ctx.terminate_on_pause = false;
 
         ctx.elevated = false;
         ctx.auto_detach = true;

@@ -21,7 +21,6 @@
 #include "system_tray.h"
 #include "upnp.h"
 #include "uuid.h"
-#include "version.h"
 #include "video.h"
 
 #ifdef _WIN32
@@ -103,6 +102,10 @@ int main(int argc, char *argv[]) {
   task_pool_util::TaskPool::task_id_t force_shutdown = nullptr;
 
 #ifdef _WIN32
+  // Avoid searching the PATH in case a user has configured their system insecurely
+  // by placing a user-writable directory in the system-wide PATH variable.
+  SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+
   setlocale(LC_ALL, "C");
 #endif
 
@@ -129,7 +132,7 @@ int main(int argc, char *argv[]) {
   // logging can begin at this point
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
-  BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+  BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VERSION << " commit: " << PROJECT_VERSION_COMMIT;
 
   // Log publisher metadata
   log_publisher_data();
@@ -268,6 +271,9 @@ int main(int argc, char *argv[]) {
       logging::log_flush();
       lifetime::debug_trap();
     };
+
+    proc::proc.terminate();
+
     force_shutdown = task_pool.pushDelayed(task, 10s).task_id;
 
     shutdown_event->raise(true);
@@ -317,8 +323,10 @@ int main(int argc, char *argv[]) {
 
   if (video::probe_encoders()) {
 #ifdef _WIN32
-    // Create a temporary virtual display for encoder capability probing if no active display was found
-    if (!video::allow_encoder_probing() && proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK) {
+    bool allow_probing = video::allow_encoder_probing();
+    bool probe_result = false;
+    // Create a temporary virtual display for encoder capability probing
+    if (proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK) {
       std::string probe_uuid_str = PROBE_DISPLAY_UUID;
       auto probe_uuid = uuid_util::uuid_t::parse(probe_uuid_str);
       auto* probe_guid = (GUID*)(void*)&probe_uuid;
@@ -338,17 +346,23 @@ int main(int argc, char *argv[]) {
         *probe_guid
       );
 
+      std::this_thread::sleep_for(500ms);
+
       // Probe again anyways
       if (video::probe_encoders()) {
-        BOOST_LOG(error) << "Video failed to find working encoder"sv;
+        if (allow_probing) {
+          BOOST_LOG(error) << "Video failed to find working encoder: allow probing but failed"sv;
+        } else {
+          BOOST_LOG(error) << "Video failed to find working encoder even after attempted with a virtual display"sv;
+        }
       }
 
       VDISPLAY::removeVirtualDisplay(*probe_guid);
-    } else {
-      BOOST_LOG(error) << "Video failed to find working encoder"sv;
+    } else if (!allow_probing) {
+      BOOST_LOG(error) << "Video failed to find working encoder: probe failed and virtual display driver isn't initialized"sv;
     }
 #else
-    BOOST_LOG(error) << "Video failed to find working encoder"sv;
+    BOOST_LOG(error) << "Video failed to find working encoder: probing failed."sv;
 #endif
   }
 
@@ -382,6 +396,7 @@ int main(int argc, char *argv[]) {
 
   std::thread httpThread {nvhttp::start};
   std::thread configThread {confighttp::start};
+  std::thread rtspThread {rtsp_stream::start};
 
 #ifdef _WIN32
   // If we're using the default port and GameStream is enabled, warn the user
@@ -391,10 +406,12 @@ int main(int argc, char *argv[]) {
   }
 #endif
 
-  rtsp_stream::rtpThread();
+  // Wait for shutdown
+  shutdown_event->view();
 
   httpThread.join();
   configThread.join();
+  rtspThread.join();
 
   task_pool.stop();
   task_pool.join();

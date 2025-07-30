@@ -32,6 +32,7 @@ extern "C" {
 #include "video.h"
 
 #ifdef _WIN32
+  #include "platform/windows/virtual_display.h"
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
@@ -48,10 +49,20 @@ namespace video {
   bool allow_encoder_probing() {
     const auto devices {display_device::enumerate_devices()};
 
-    // If there are no devices, then either the API is not working correctly or OS does not support the lib.
-    // Either way we should not block the probing in this case as we can't tell what's wrong.
+    // // If there are no devices, then either the API is not working correctly or OS does not support the lib.
+    // // Either way we should not block the probing in this case as we can't tell what's wrong.
+    // if (devices.empty()) {
+    //   return true;
+    // }
+
     if (devices.empty()) {
-      return true;
+      #ifdef _WIN32
+      // We'll create a temporary virtual display for probing anyways.
+      if (proc::vDisplayDriverStatus == VDISPLAY::DRIVER_STATUS::OK) {
+        return false;
+      }
+      #endif
+        return true;
     }
 
     // Since Windows 11 24H2, it is possible that there will be no active devices present
@@ -764,6 +775,18 @@ namespace video {
         {"usage"s, &config::video.amd.amd_usage_hevc},
         {"vbaq"s, &config::video.amd.amd_vbaq},
         {"enforce_hrd"s, &config::video.amd.amd_enforce_hrd},
+        {"level"s, [](const config_t &cfg) {
+           auto size = cfg.width * cfg.height;
+           // For 4K and below, try to use level 5.1 or 5.2 if possible
+           if (size <= 8912896) {
+             if (size * cfg.framerate <= 534773760) {
+               return "5.1"s;
+             } else if (size * cfg.framerate <= 1069547520) {
+               return "5.2"s;
+             }
+           }
+           return "auto"s;
+         }},
       },
       {},  // SDR-specific options
       {},  // HDR-specific options
@@ -1661,7 +1684,7 @@ namespace video {
       ctx->thread_count = ctx->slices;
 
       AVDictionary *options {nullptr};
-      auto handle_option = [&options](const encoder_t::option_t &option) {
+      auto handle_option = [&options, &config](const encoder_t::option_t &option) {
         std::visit(
           util::overloaded {
             [&](int v) {
@@ -1675,7 +1698,7 @@ namespace video {
                 av_dict_set_int(&options, option.name.c_str(), **v, 0);
               }
             },
-            [&](std::function<int()> v) {
+            [&](const std::function<int()> &v) {
               av_dict_set_int(&options, option.name.c_str(), v(), 0);
             },
             [&](const std::string &v) {
@@ -1685,6 +1708,9 @@ namespace video {
               if (!v->empty()) {
                 av_dict_set(&options, option.name.c_str(), v->c_str(), 0);
               }
+            },
+            [&](const std::function<const std::string(const config_t &cfg)> &v) {
+              av_dict_set(&options, option.name.c_str(), v(config).c_str(), 0);
             }
           },
           option.value
@@ -1896,11 +1922,11 @@ namespace video {
       }
     });
 
-    // set minimum frame time, avoiding violation of client-requested target framerate
-    auto minimum_frame_time = std::chrono::milliseconds(1000 / std::min(config.framerate, (config::video.min_fps_factor * 10)));
-    auto frame_threshold = std::chrono::microseconds(1000ms * 1000 / config.encodingFramerate);
-    BOOST_LOG(debug) << "Minimum frame time set to "sv << minimum_frame_time.count() << "ms, based on min fps factor of "sv << config::video.min_fps_factor << "."sv;
-    BOOST_LOG(info) << "Frame threshold: "sv << frame_threshold;
+    // set minimum frame time based on client-requested target framerate
+    auto minimum_frame_time = std::chrono::nanoseconds(1000ms) * 1000 / config.encodingFramerate;
+    auto encode_frame_threshold = std::chrono::nanoseconds(1000ms) * 1000 / config.encodingFramerate;
+    auto frame_variation_threshold = encode_frame_threshold / 4;
+    BOOST_LOG(info) << "Encoding Frame threshold: "sv << encode_frame_threshold;
 
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
@@ -1974,26 +2000,17 @@ namespace video {
         if (auto img = images->pop(minimum_frame_time)) {
           frame_timestamp = img->frame_timestamp;
           // If new frame comes in way too fast, just drop
-          if (*frame_timestamp < next_frame_start) {
+          if (*frame_timestamp < (next_frame_start - frame_variation_threshold)) {
             continue;
           }
           if (session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             break;
           }
+
+          next_frame_start = *frame_timestamp + encode_frame_threshold;
         } else if (!images->running()) {
           break;
-        }
-
-        if (frame_timestamp) {
-          auto frame_diff = *frame_timestamp - next_frame_start;
-
-          if (frame_diff > frame_threshold / 2) {
-            next_frame_start = *frame_timestamp + frame_threshold / 2;
-          } else {
-            frame_timestamp = next_frame_start;
-            next_frame_start += frame_threshold;
-          }
         }
       }
 

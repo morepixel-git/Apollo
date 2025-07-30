@@ -38,7 +38,6 @@
 #include "process.h"
 #include "utility.h"
 #include "uuid.h"
-#include "version.h"
 
 #ifdef _WIN32
   #include "platform/windows/utils.h"
@@ -89,6 +88,8 @@ namespace confighttp {
   void send_response(resp_https_t response, const nlohmann::json &output_tree) {
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(output_tree.dump(), headers);
   }
 
@@ -106,7 +107,9 @@ namespace confighttp {
     tree["status"] = false;
     tree["error"] = "Unauthorized";
     const SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "application/json"}
+      {"Content-Type", "application/json"},
+      {"X-Frame-Options", "DENY"},
+      {"Content-Security-Policy", "frame-ancestors 'none';"}
     };
     response->write(code, tree.dump(), headers);
   }
@@ -121,7 +124,9 @@ namespace confighttp {
     auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     BOOST_LOG(info) << "Web UI: ["sv << address << "] -- redirecting"sv;
     const SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Location", path}
+      {"Location", path},
+      {"X-Frame-Options", "DENY"},
+      {"Content-Security-Policy", "frame-ancestors 'none';"}
     };
     response->write(SimpleWeb::StatusCode::redirection_temporary_redirect, headers);
   }
@@ -218,6 +223,9 @@ namespace confighttp {
     tree["error"] = "Not Found";
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+
     response->write(code, tree.dump(), headers);
   }
 
@@ -235,7 +243,47 @@ namespace confighttp {
     tree["error"] = error_message;
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+
     response->write(code, tree.dump(), headers);
+  }
+
+
+  /**
+   * @brief Validate the request content type and send bad request when mismatch.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   * @param contentType The required content type.
+   */
+  bool validateContentType(resp_https_t response, req_https_t request, const std::string_view& contentType) {
+    auto requestContentType = request->header.find("content-type");
+    if (requestContentType == request->header.end()) {
+      bad_request(response, request, "Content type not provided");
+      return false;
+    }
+
+    // Extract the media type part before any parameters (e.g., charset)
+    std::string actualContentType = requestContentType->second;
+    size_t semicolonPos = actualContentType.find(';');
+    if (semicolonPos != std::string::npos) {
+      actualContentType = actualContentType.substr(0, semicolonPos);
+    }
+
+    // Trim whitespace and convert to lowercase for case-insensitive comparison
+    boost::algorithm::trim(actualContentType);
+    boost::algorithm::to_lower(actualContentType);
+
+    std::string expectedContentType(contentType);
+    boost::algorithm::to_lower(expectedContentType);
+
+    if (actualContentType != expectedContentType) {
+      bad_request(response, request, "Content type mismatch");
+      return false;
+    }
+    return true;
+
+    return true;
   }
 
   /**
@@ -251,9 +299,10 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "index.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -270,9 +319,10 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "pin.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -289,10 +339,11 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "apps.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"},
-      {"Access-Control-Allow-Origin", "https://images.igdb.com/"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+    headers.emplace("Access-Control-Allow-Origin", "https://images.igdb.com/");
     response->write(content, headers);
   }
 
@@ -309,9 +360,10 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "clients.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -328,9 +380,10 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "config.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -347,9 +400,10 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "password.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -371,9 +425,10 @@ namespace confighttp {
     }
 
     std::string content = file_handler::read_file(WEB_DIR "login.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -391,9 +446,10 @@ namespace confighttp {
     }
 
     std::string content = file_handler::read_file(WEB_DIR "welcome.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -410,9 +466,10 @@ namespace confighttp {
     print_req(request);
 
     std::string content = file_handler::read_file(WEB_DIR "troubleshooting.html");
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "text/html; charset=utf-8"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(content, headers);
   }
 
@@ -425,9 +482,10 @@ namespace confighttp {
     print_req(request);
 
     std::ifstream in(WEB_DIR "images/apollo.ico", std::ios::binary);
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "image/x-icon"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "image/x-icon");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
   }
 
@@ -443,9 +501,10 @@ namespace confighttp {
     print_req(request);
 
     std::ifstream in(WEB_DIR "images/logo-apollo-45.png", std::ios::binary);
-    SimpleWeb::CaseInsensitiveMultimap headers {
-      {"Content-Type", "image/png"}
-    };
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "image/png");
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
   }
 
@@ -496,6 +555,8 @@ namespace confighttp {
     }
     SimpleWeb::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", mimeType->second);
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     std::ifstream in(filePath.string(), std::ios::binary);
     response->write(SimpleWeb::StatusCode::success_ok, in, headers);
   }
@@ -519,6 +580,8 @@ namespace confighttp {
       nlohmann::json file_tree = nlohmann::json::parse(content);
 
       file_tree["current_app"] = proc::proc.get_running_app_uuid();
+      file_tree["host_uuid"] = http::unique_id;
+      file_tree["host_name"] = config::nvhttp.sunshine_name;
 
       send_response(response, file_tree);
     } catch (std::exception &e) {
@@ -561,7 +624,7 @@ namespace confighttp {
    * @api_examples{/api/apps| POST| {"name":"Hello, World!","uuid": "aaaa-bbbb"}}
    */
   void saveApp(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -607,7 +670,7 @@ namespace confighttp {
    * @api_examples{/api/apps/close| POST| null}
    */
   void closeApp(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -627,7 +690,7 @@ namespace confighttp {
    * @api_examples{/api/apps/reorder| POST| {"order": ["aaaa-bbbb", "cccc-dddd"]}}
    */
   void reorderApps(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -738,22 +801,27 @@ namespace confighttp {
    * @param response The HTTP response object.
    * @param request The HTTP request object.
    *
-   * @api_examples{/api/apps/9999| DELETE| null}
+   * @api_examples{/api/apps/delete | POST| { uuid: 'aaaa-bbbb' }}
    */
   void deleteApp(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request))
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
+    }
 
     print_req(request);
 
-    auto args = request->parse_query_string();
-    if (args.find("uuid"s) == std::end(args)) {
-      bad_request(response, request, "Missing a required parameter to delete app");
-      return;
-    }
-    auto uuid = nvhttp::get_arg(args, "uuid");
-
     try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+
+      // Check for required uuid field in body
+      if (!input_tree.contains("uuid") || !input_tree["uuid"].is_string()) {
+        bad_request(response, request, "Missing or invalid uuid in request body");
+        return;
+      }
+      auto uuid = input_tree["uuid"].get<std::string>();
+
       // Read the apps file into a nlohmann::json object.
       std::string content = file_handler::read_file(config::stream.file_apps.c_str());
       nlohmann::json fileTree = nlohmann::json::parse(content);
@@ -826,7 +894,7 @@ namespace confighttp {
    * @endcode
    */
   void updateClient(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -840,10 +908,23 @@ namespace confighttp {
       std::string uuid = input_tree.value("uuid", "");
       std::string name = input_tree.value("name", "");
       std::string display_mode = input_tree.value("display_mode", "");
+      bool enable_legacy_ordering = input_tree.value("enable_legacy_ordering", true);
+      bool allow_client_commands = input_tree.value("allow_client_commands", true);
+      bool always_use_virtual_display = input_tree.value("always_use_virtual_display", false);
       auto do_cmds = nvhttp::extract_command_entries(input_tree, "do");
       auto undo_cmds = nvhttp::extract_command_entries(input_tree, "undo");
       auto perm = static_cast<crypto::PERM>(input_tree.value("perm", static_cast<uint32_t>(crypto::PERM::_no)) & static_cast<uint32_t>(crypto::PERM::_all));
-      output_tree["status"] = nvhttp::update_device_info(uuid, name, display_mode, do_cmds, undo_cmds, perm);
+      output_tree["status"] = nvhttp::update_device_info(
+        uuid,
+        name,
+        display_mode,
+        do_cmds,
+        undo_cmds,
+        perm,
+        enable_legacy_ordering,
+        allow_client_commands,
+        always_use_virtual_display
+      );
       send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "Update Client: "sv << e.what();
@@ -866,7 +947,7 @@ namespace confighttp {
    * @api_examples{/api/clients/unpair| POST| {"uuid":"1234"}}
    */
   void unpair(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -894,7 +975,7 @@ namespace confighttp {
    * @api_examples{/api/clients/unpair-all| POST| null}
    */
   void unpairAll(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -922,7 +1003,7 @@ namespace confighttp {
     nlohmann::json output_tree;
     output_tree["status"] = true;
     output_tree["platform"] = SUNSHINE_PLATFORM;
-    output_tree["version"] = PROJECT_VER;
+    output_tree["version"] = PROJECT_VERSION;
 #ifdef _WIN32
     output_tree["vdisplayStatus"] = (int)proc::vDisplayDriverStatus;
 #endif
@@ -965,7 +1046,7 @@ namespace confighttp {
    * @api_examples{/api/config| POST| {"key":"value"}}
    */
   void saveConfig(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -1004,7 +1085,7 @@ namespace confighttp {
    * @api_examples{/api/covers/upload| POST| {"key":"igdb_1234","url":"https://images.igdb.com/igdb/image/upload/t_cover_big_2x/abc123.png"}}
    */
   void uploadCover(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -1067,6 +1148,8 @@ namespace confighttp {
     contentType += currentCodePageToCharset();
   #endif
     headers.emplace("Content-Type", contentType);
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
     response->write(SimpleWeb::StatusCode::success_ok, content, headers);
   }
 
@@ -1089,7 +1172,7 @@ namespace confighttp {
    * @api_examples{/api/password| POST| {"currentUsername":"admin","currentPassword":"admin","newUsername":"admin","newPassword":"admin","confirmNewPassword":"admin"}}
    */
   void savePassword(resp_https_t response, req_https_t request) {
-    if (!config::sunshine.username.empty() && !authenticate(response, request))
+    if ((!config::sunshine.username.empty() && !authenticate(response, request)) || !validateContentType(response, request, "application/json"))
       return;
     print_req(request);
     std::vector<std::string> errors;
@@ -1146,7 +1229,7 @@ namespace confighttp {
    * @api_examples{/api/otp| GET| null}
    */
   void getOTP(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -1154,17 +1237,17 @@ namespace confighttp {
 
     nlohmann::json output_tree;
     try {
-      auto args = request->parse_query_string();
-      auto it = args.find("passphrase");
-      if (it == args.end())
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+
+      std::string passphrase = input_tree.value("passphrase", "");
+      if (passphrase.empty())
         throw std::runtime_error("Passphrase not provided!");
-      if (it->second.size() < 4)
+      if (passphrase.size() < 4)
         throw std::runtime_error("Passphrase too short!");
-      std::string passphrase = it->second;
-      std::string deviceName;
-      it = args.find("deviceName");
-      if (it != args.end())
-        deviceName = it->second;
+
+      std::string deviceName = input_tree.value("deviceName", "");
       output_tree["otp"] = nvhttp::request_otp(passphrase, deviceName);
       output_tree["ip"] = platf::get_local_ip_for_gateway();
       output_tree["name"] = config::nvhttp.sunshine_name;
@@ -1193,15 +1276,15 @@ namespace confighttp {
    * @api_examples{/api/pin| POST| {"pin":"1234","name":"My PC"}}
    */
   void savePin(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
     print_req(request);
 
-    std::stringstream ss;
-    ss << request->content.rdbuf();
     try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       nlohmann::json output_tree;
       std::string pin = input_tree.value("pin", "");
@@ -1222,7 +1305,7 @@ namespace confighttp {
    * @api_examples{/api/reset-display-device-persistence| POST| null}
    */
   void resetDisplayDevicePersistence(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
@@ -1241,11 +1324,13 @@ namespace confighttp {
    * @api_examples{/api/restart| POST| null}
    */
   void restart(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
     print_req(request);
+
+    proc::proc.terminate();
 
     // We may not return from this call
     platf::restart();
@@ -1266,6 +1351,9 @@ namespace confighttp {
     print_req(request);
 
     BOOST_LOG(warning) << "Requested quit from config page!"sv;
+
+    proc::proc.terminate();
+
 #ifdef _WIN32
     if (GetConsoleWindow() == NULL) {
       lifetime::exit_sunshine(ERROR_SHUTDOWN_IN_PROGRESS, true);
@@ -1288,43 +1376,54 @@ namespace confighttp {
    * @param request The HTTP request object.
    */
   void launchApp(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
     print_req(request);
 
-    nlohmann::json output_tree;
-    auto args = request->parse_query_string();
-    if (args.find("uuid") == args.end()) {
-      bad_request(response, request, "Missing a required launch parameter");
-      return;
-    }
-    std::string uuid = nvhttp::get_arg(args, "uuid");
-    const auto &apps = proc::proc.get_apps();
-    for (auto &app : apps) {
-      if (app.uuid == uuid) {
-        crypto::named_cert_t named_cert {
-          .name = "",
-          .uuid = http::unique_id,
-          .perm = crypto::PERM::_all,
-        };
-        BOOST_LOG(info) << "Launching app ["sv << app.name << "] from web UI"sv;
-        auto launch_session = nvhttp::make_launch_session(true, false, args, &named_cert);
-        auto err = proc::proc.execute(app, launch_session);
-        if (err) {
-          bad_request(response, request, err == 503 ?
-                      "Failed to initialize video capture/encoding. Is a display connected and turned on?" :
-                      "Failed to start the specified application");
-        } else {
-          output_tree["status"] = true;
-          send_response(response, output_tree);
-        }
+    try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json input_tree = nlohmann::json::parse(ss.str());
+
+      // Check for required uuid field in body
+      if (!input_tree.contains("uuid") || !input_tree["uuid"].is_string()) {
+        bad_request(response, request, "Missing or invalid uuid in request body");
         return;
       }
+      std::string uuid = input_tree["uuid"].get<std::string>();
+
+      nlohmann::json output_tree;
+      const auto &apps = proc::proc.get_apps();
+      for (auto &app : apps) {
+        if (app.uuid == uuid) {
+          crypto::named_cert_t named_cert {
+            .name = "",
+            .uuid = http::unique_id,
+            .perm = crypto::PERM::_all,
+          };
+          BOOST_LOG(info) << "Launching app ["sv << app.name << "] from web UI"sv;
+          auto launch_session = nvhttp::make_launch_session(true, false, request->parse_query_string(), &named_cert);
+          auto err = proc::proc.execute(app, launch_session);
+          if (err) {
+            bad_request(response, request, err == 503 ?
+                        "Failed to initialize video capture/encoding. Is a display connected and turned on?" :
+                        "Failed to start the specified application");
+          } else {
+            output_tree["status"] = true;
+            send_response(response, output_tree);
+          }
+          return;
+        }
+      }
+      BOOST_LOG(error) << "Couldn't find app with uuid ["sv << uuid << ']';
+      bad_request(response, request, "Cannot find requested application");
     }
-    BOOST_LOG(error) << "Couldn't find app with uuid ["sv << uuid << ']';
-    bad_request(response, request, "Cannot find requested application");
+    catch (std::exception &e) {
+      BOOST_LOG(warning) << "LaunchApp: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
   }
 
   /**
@@ -1333,24 +1432,24 @@ namespace confighttp {
    * @param request The HTTP request object.
    */
   void disconnect(resp_https_t response, req_https_t request) {
-    if (!authenticate(response, request)) {
+    if (!validateContentType(response, request, "application/json") || !authenticate(response, request)) {
       return;
     }
 
     print_req(request);
 
-    std::stringstream ss;
-    ss << request->content.rdbuf();
-    nlohmann::json output_tree;
     try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
+      nlohmann::json output_tree;
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       std::string uuid = input_tree.value("uuid", "");
       output_tree["status"] = nvhttp::find_and_stop_session(uuid, true);
+      send_response(response, output_tree);
     } catch (std::exception &e) {
       BOOST_LOG(warning) << "Disconnect: "sv << e.what();
       bad_request(response, request, e.what());
     }
-    send_response(response, output_tree);
   }
 
   /**
@@ -1367,16 +1466,17 @@ namespace confighttp {
    * @endcode
    */
   void login(resp_https_t response, req_https_t request) {
-    if (!checkIPOrigin(response, request)) {
+    if (!checkIPOrigin(response, request) || !validateContentType(response, request, "application/json")) {
       return;
     }
 
     auto fg = util::fail_guard([&]{
       response->write(SimpleWeb::StatusCode::client_error_unauthorized);
     });
-    std::stringstream ss;
-    ss << request->content.rdbuf();
+
     try {
+      std::stringstream ss;
+      ss << request->content.rdbuf();
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       std::string username = input_tree.value("username", "");
       std::string password = input_tree.value("password", "");
@@ -1387,7 +1487,7 @@ namespace confighttp {
       sessionCookie = util::hex(crypto::hash(sessionCookieRaw + config::sunshine.salt)).to_string();
       cookie_creation_time = std::chrono::steady_clock::now();
       const SimpleWeb::CaseInsensitiveMultimap headers {
-        { "Set-Cookie", "auth=" + sessionCookieRaw + "; Secure; Max-Age=2592000; Path=/" }
+        { "Set-Cookie", "auth=" + sessionCookieRaw + "; Secure; SameSite=Strict; Max-Age=2592000; Path=/" }
       };
       response->write(headers);
       fg.disable();
@@ -1431,7 +1531,7 @@ namespace confighttp {
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
     server.resource["^/api/login"]["POST"] = login;
     server.resource["^/api/pin$"]["POST"] = savePin;
-    server.resource["^/api/otp$"]["GET"] = getOTP;
+    server.resource["^/api/otp$"]["POST"] = getOTP;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/apps$"]["POST"] = saveApp;
     server.resource["^/api/apps/reorder$"]["POST"] = reorderApps;

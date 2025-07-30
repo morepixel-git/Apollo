@@ -22,7 +22,14 @@
 // lib includes
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/host_name.hpp>
-#include <boost/process/v1.hpp>
+#include <boost/process/v1/group.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/env.hpp>
+#include <boost/process/v1/environment.hpp>
+#include <boost/process/v1/group.hpp>
+#include <boost/process/v1/handles.hpp>
+#include <boost/process/v1/io.hpp>
+#include <boost/process/v1/start_dir.hpp>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -45,7 +52,7 @@
 
 using namespace std::literals;
 namespace fs = std::filesystem;
-namespace bp = boost::process;
+namespace bp = boost::process::v1;
 
 window_system_e window_system;
 
@@ -506,7 +513,7 @@ std::string get_local_ip_for_gateway() {
       // UDP GSO on Linux currently only supports sending 64K or 64 segments at a time
       size_t seg_index = 0;
       const size_t seg_max = 65536 / 1500;
-      struct iovec iovs[(send_info.headers ? std::min(seg_max, send_info.block_count) : 1) * max_iovs_per_msg] = {};
+      struct iovec iovs[(send_info.headers ? std::min(seg_max, send_info.block_count) : 1) * max_iovs_per_msg];
       auto msg_size = send_info.header_size + send_info.payload_size;
       while (seg_index < send_info.block_count) {
         int iovlen = 0;
@@ -589,10 +596,11 @@ std::string get_local_ip_for_gateway() {
 
     {
       // If GSO is not supported, use sendmmsg() instead.
-      struct mmsghdr msgs[send_info.block_count] = {};
-      struct iovec iovs[send_info.block_count * (send_info.headers ? 2 : 1)] = {};
+      struct mmsghdr msgs[send_info.block_count];
+      struct iovec iovs[send_info.block_count * (send_info.headers ? 2 : 1)];
       int iov_idx = 0;
       for (size_t i = 0; i < send_info.block_count; i++) {
+        msgs[i].msg_len = 0;
         msgs[i].msg_hdr.msg_iov = &iovs[iov_idx];
         msgs[i].msg_hdr.msg_iovlen = send_info.headers ? 2 : 1;
 
@@ -610,6 +618,7 @@ std::string get_local_ip_for_gateway() {
         msgs[i].msg_hdr.msg_namelen = msg.msg_namelen;
         msgs[i].msg_hdr.msg_control = cmbuf.buf;
         msgs[i].msg_hdr.msg_controllen = cmbuflen;
+        msgs[i].msg_hdr.msg_flags = 0;
       }
 
       // Call sendmmsg() until all messages are sent
@@ -702,7 +711,7 @@ std::string get_local_ip_for_gateway() {
       memcpy(CMSG_DATA(pktinfo_cm), &pktInfo, sizeof(pktInfo));
     }
 
-    struct iovec iovs[2] = {};
+    struct iovec iovs[2];
     int iovlen = 0;
     if (send_info.header) {
       iovs[iovlen].iov_base = (void *) send_info.header;

@@ -36,6 +36,7 @@
 #include "utility.h"
 #include "uuid.h"
 #include "video.h"
+#include "zwpad.h"
 
 #ifdef _WIN32
   #include "platform/windows/virtual_display.h"
@@ -247,6 +248,9 @@ namespace nvhttp {
         named_cert_node["uuid"] = named_cert_p->uuid;
         named_cert_node["display_mode"] = named_cert_p->display_mode;
         named_cert_node["perm"] = static_cast<uint32_t>(named_cert_p->perm);
+        named_cert_node["enable_legacy_ordering"] = named_cert_p->enable_legacy_ordering;
+        named_cert_node["allow_client_commands"] = named_cert_p->allow_client_commands;
+        named_cert_node["always_use_virtual_display"] = named_cert_p->always_use_virtual_display;
 
         // Add "do" commands if available.
         if (!named_cert_p->do_cmds.empty()) {
@@ -323,6 +327,9 @@ namespace nvhttp {
             named_cert_p->uuid = uuid_util::uuid_t::generate().string();
             named_cert_p->display_mode = "";
             named_cert_p->perm = PERM::_all;
+            named_cert_p->enable_legacy_ordering = true;
+            named_cert_p->allow_client_commands = true;
+            named_cert_p->always_use_virtual_display = false;
             client.named_devices.emplace_back(named_cert_p);
           }
         }
@@ -338,6 +345,9 @@ namespace nvhttp {
         named_cert_p->uuid = el.value("uuid", "");
         named_cert_p->display_mode = el.value("display_mode", "");
         named_cert_p->perm = (PERM)(util::get_non_string_json_value<uint32_t>(el, "perm", (uint32_t)PERM::_all)) & PERM::_all;
+        named_cert_p->enable_legacy_ordering = el.value("enable_legacy_ordering", true);
+        named_cert_p->allow_client_commands = el.value("allow_client_commands", true);
+        named_cert_p->always_use_virtual_display = el.value("always_use_virtual_display", false);
         // Load command entries for "do" and "undo" keys.
         named_cert_p->do_cmds = extract_command_entries(el, "do");
         named_cert_p->undo_cmds = extract_command_entries(el, "undo");
@@ -448,7 +458,7 @@ namespace nvhttp {
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
     launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
-    launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0"));
+    launch_session->virtual_display = util::from_view(get_arg(args, "virtualDisplay", "0")) || named_cert_p->always_use_virtual_display;
     launch_session->scale_factor = util::from_view(get_arg(args, "scaleFactor", "100"));
 
     launch_session->client_do_cmds = named_cert_p->do_cmds;
@@ -620,6 +630,10 @@ namespace nvhttp {
       } else {
         named_cert_p->perm = PERM::_default;
       }
+
+      named_cert_p->enable_legacy_ordering = true;
+      named_cert_p->allow_client_commands = true;
+      named_cert_p->always_use_virtual_display = false;
 
       auto it = map_id_sess.find(client.uniqueID);
       map_id_sess.erase(it);
@@ -1008,6 +1022,9 @@ namespace nvhttp {
       named_cert_node["uuid"] = named_cert->uuid;
       named_cert_node["display_mode"] = named_cert->display_mode;
       named_cert_node["perm"] = static_cast<uint32_t>(named_cert->perm);
+      named_cert_node["enable_legacy_ordering"] = named_cert->enable_legacy_ordering;
+      named_cert_node["allow_client_commands"] = named_cert->allow_client_commands;
+      named_cert_node["always_use_virtual_display"] = named_cert->always_use_virtual_display;
 
       // Add "do" commands if available
       if (!named_cert->do_cmds.empty()) {
@@ -1069,7 +1086,17 @@ namespace nvhttp {
     if (!!(named_cert_p->perm & PERM::_all_actions)) {
       auto current_appid = proc::proc.running();
       auto should_hide_inactive_apps = config::input.enable_input_only_mode && current_appid > 0 && current_appid != proc::input_only_app_id;
-      for (auto &app : proc::proc.get_apps()) {
+
+      auto app_list = proc::proc.get_apps();
+
+      bool enable_legacy_ordering = config::sunshine.legacy_ordering && named_cert_p->enable_legacy_ordering;
+      size_t bits;
+      if (enable_legacy_ordering) {
+        bits = zwpad::pad_width_for_count(app_list.size());
+      }
+
+      for (size_t i = 0; i < app_list.size(); i++) {
+        auto& app = app_list[i];
         auto appid = util::from_view(app.id);
         if (should_hide_inactive_apps) {
           if (
@@ -1085,10 +1112,17 @@ namespace nvhttp {
           }
         }
 
+        std::string app_name;
+        if (enable_legacy_ordering) {
+          app_name = zwpad::pad_for_ordering(app.name, bits, i);
+        } else {
+          app_name = app.name;
+        }
+
         pt::ptree app_node;
 
         app_node.put("IsHdrSupported"s, video::active_hevc_mode == 3 ? 1 : 0);
-        app_node.put("AppTitle"s, app.name);
+        app_node.put("AppTitle"s, app_name);
         app_node.put("UUID", app.uuid);
         app_node.put("IDX", app.idx);
         app_node.put("ID", app.id);
@@ -1132,7 +1166,7 @@ namespace nvhttp {
     auto appid = util::from_view(appid_str);
     auto current_appid = proc::proc.running();
     auto current_app_uuid = proc::proc.get_running_app_uuid();
-    bool is_input_only = config::input.enable_input_only_mode && appid == proc::input_only_app_id;
+    bool is_input_only = config::input.enable_input_only_mode && (appid == proc::input_only_app_id || (appuuid_str == REMOTE_INPUT_UUID));
 
     auto named_cert_p = get_verified_cert(request);
     auto perm = PERM::launch;
@@ -1238,7 +1272,7 @@ namespace nvhttp {
 
         BOOST_LOG(debug) << "Resuming app [" << proc::proc.get_last_run_app_name() << "] from launch app path...";
 
-        if (!proc::proc.allow_client_commands) {
+        if (!proc::proc.allow_client_commands || !named_cert_p->allow_client_commands) {
           launch_session->client_do_cmds.clear();
           launch_session->client_undo_cmds.clear();
         }
@@ -1355,7 +1389,7 @@ namespace nvhttp {
     }
     auto launch_session = make_launch_session(host_audio, false, args, named_cert_p);
 
-    if (!proc::proc.allow_client_commands) {
+    if (!proc::proc.allow_client_commands || !named_cert_p->allow_client_commands) {
       launch_session->client_do_cmds.clear();
       launch_session->client_undo_cmds.clear();
     }
@@ -1777,7 +1811,10 @@ namespace nvhttp {
     const std::string& display_mode,
     const cmd_list_t& do_cmds,
     const cmd_list_t& undo_cmds,
-    const crypto::PERM newPerm
+    const crypto::PERM newPerm,
+    const bool enable_legacy_ordering,
+    const bool allow_client_commands,
+    const bool always_use_virtual_display
   ) {
     find_and_udpate_session_info(uuid, name, newPerm);
 
@@ -1791,6 +1828,9 @@ namespace nvhttp {
         named_cert_p->perm = newPerm;
         named_cert_p->do_cmds = do_cmds;
         named_cert_p->undo_cmds = undo_cmds;
+        named_cert_p->enable_legacy_ordering = enable_legacy_ordering;
+        named_cert_p->allow_client_commands = allow_client_commands;
+        named_cert_p->always_use_virtual_display = always_use_virtual_display;
         save_state();
         return true;
       }
