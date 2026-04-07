@@ -284,6 +284,10 @@ namespace proc {
           target_fps *= 1000;
         }
 
+        if (config::video.double_refreshrate) {
+          target_fps *= 2;
+        }
+
         std::wstring vdisplayName = VDISPLAY::createVirtualDisplay(
           device_uuid_str.c_str(),
           device_name.c_str(),
@@ -292,10 +296,6 @@ namespace proc {
           target_fps,
           launch_session->display_guid
         );
-
-        if (config::video.double_refreshrate) {
-          target_fps *= 2;
-        }
 
         // No matter we get the display name or not, the virtual display might still be created.
         // We need to track it properly to remove the display when the session terminates.
@@ -311,10 +311,10 @@ namespace proc {
           }
 
           // Check the ISOLATED DISPLAY configuration setting and rearrange the displays
-         if (config::video.isolated_virtual_display_option == true) {
-              // Apply the isolated display settings
-              VDISPLAY::changeDisplaySettings2(vdisplayName.c_str(), render_width, render_height, target_fps, true);
-         }
+          if (config::video.isolated_virtual_display_option == true) {
+            // Apply the isolated display settings
+            VDISPLAY::changeDisplaySettings2(vdisplayName.c_str(), render_width, render_height, target_fps, true);
+          }
 
           // Set virtual_display to true when everything went fine
           this->virtual_display = true;
@@ -394,7 +394,7 @@ namespace proc {
     _env["APOLLO_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
     _env["APOLLO_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
 
-    int channelCount = launch_session->surround_info & (65535);
+    int channelCount = launch_session->surround_info & 65535;
     switch (channelCount) {
       case 2:
         _env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "2.0";
